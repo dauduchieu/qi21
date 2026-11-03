@@ -1,5 +1,3 @@
-from base import BaseLLM
-
 from pydantic import BaseModel
 from openai import OpenAI
 
@@ -8,7 +6,7 @@ from io import BytesIO
 import base64
 
 
-class OpenAILLM(BaseLLM):
+class OpenAILLM:
     def __init__(
         self,
         base_url: str,
