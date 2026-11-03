@@ -40,6 +40,7 @@ def load_qwen_pipeline(
     os.makedirs(OFFLOAD_TXT, exist_ok=True)
 
     ######### DOWNLOAD #########
+    print("Downloading...")
     local = snapshot_download(MODEL_ID)
 
     tr_dir = os.path.join(local, "transformer")
@@ -53,6 +54,7 @@ def load_qwen_pipeline(
     print(local)
 
     ######### TRANSFORMER #########
+    print("Loading transformer...")
     config = QwenImage21Transformer2DModel.load_config(tr_dir)
 
     with init_empty_weights():
@@ -84,9 +86,11 @@ def load_qwen_pipeline(
     transformer.eval()
 
     ######### PROCESSOR #########
+    print("Loading processor...")
     processor = Qwen3VLProcessor.from_pretrained(proc_dir)
 
     ######### TEXT ENCODER #########
+    print("Loading text encoder...")
     text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
         te_dir,
         torch_dtype=DTYPE,
@@ -103,6 +107,7 @@ def load_qwen_pipeline(
     # print(text_encoder.hf_device_map)
 
     ######### VAE #########
+    print("Loading vae...")
     vae = AutoencoderKLQwenImage21.from_pretrained(
         vae_dir,
         torch_dtype=DTYPE,
@@ -121,6 +126,7 @@ def load_qwen_pipeline(
     vae.eval()
 
     ######### PIPE #########
+    print("Loading pipe...")
     pipe = QwenImage21Pipeline.from_pretrained(
         local,
         text_encoder=None,
