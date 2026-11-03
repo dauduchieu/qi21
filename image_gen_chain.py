@@ -9,20 +9,28 @@ class ImageGenChain:
     def __init__(
         self,
         inputs: dict[str, dict],
-        steps: dict[str, dict],
+        steps: list[dict],
         generate,
         image_grid,
         save_image_to_ram,
+        gen_ref_image_kwarg: str = "images",
         preview_width: int = 100,
         direction: str = "TD",
         delay: int = 3,
     ):
-        self.images = { "inputs": inputs }
-        
+        # =========================
+        # CONFIG
+        # =========================
+
+        self.images = {"inputs": inputs}
+
         self.steps = steps
         self.generate = generate
         self.image_grid = image_grid
         self.save_image_to_ram = save_image_to_ram
+
+        # Tên kwargs mà generate() dùng để nhận reference images
+        self.gen_ref_image_kwarg = gen_ref_image_kwarg
 
         self.preview_width = preview_width
         self.direction = direction
@@ -34,6 +42,10 @@ class ImageGenChain:
 
         print(f"Gen ID: {self.gen_id}")
 
+        # =========================
+        # INITIAL MERMAID DISPLAY
+        # =========================
+
         self.display = display(
             HTML(self._get_mermaid_html()),
             display_id=True
@@ -44,29 +56,37 @@ class ImageGenChain:
     # =========================
     # MERMAID
     # =========================
+
     def _get_mermaid_code(self):
-        step_ids = [step["step_id"] for step in self.steps]
+        step_ids = [
+            step["step_id"]
+            for step in self.steps
+        ]
 
         edges = [
             (ref_img, step["step_id"])
             for step in self.steps
-            for ref_img in step["ref_images"]
+            for ref_img in step.get("ref_images", [])
         ]
 
         nodes = ["inputs"]
         nodes += step_ids
+
+        nodes_text = "\n    ".join(nodes)
+
+        edges_text = "\n    ".join([
+            f"{edge[0].split('.')[0]} --> {edge[1]}"
+            for edge in edges
+        ])
 
         code = f"""
             flowchart {self.direction}
                 classDef done fill:#dcfce7,color:#166534,stroke:#16a34a
                 classDef running fill:#fef3c7,color:#92400e,stroke:#d97706
 
-                {"\n    ".join(nodes)}
+                {nodes_text}
 
-                {"\n    ".join([
-                    f"{edge[0].split('.')[0]} --> {edge[1]}"
-                    for edge in edges
-                ])}
+                {edges_text}
         """
 
         if self.running_idx < len(self.steps):
@@ -125,16 +145,21 @@ class ImageGenChain:
 
     def _get_ref_images(
         self,
-        ref_strings: list[str]
+        ref_strings: list[str] | None
     ) -> list[Image] | None:
+
+        if not ref_strings:
+            return None
 
         ref_images: list[Image] = []
 
         for ref_string in ref_strings:
 
+            # Reference có dạng: "step_id.image_id"
             if "." in ref_string:
-                [step_id, image_id] = ref_string.split(".")
+                step_id, image_id = ref_string.split(".", 1)
 
+            # Reference chỉ có step_id
             else:
                 step_id = ref_string
 
@@ -143,13 +168,15 @@ class ImageGenChain:
                 )
 
                 step_images = [
-                    self._get_image(step_id, k)
-                    for k in step_image_keys
+                    self._get_image(step_id, key)
+                    for key in step_image_keys
                 ]
 
+                # Step chỉ có một ảnh → tự chọn
                 if len(step_image_keys) == 1:
                     image_id = step_image_keys[0]
 
+                # Step có nhiều ảnh → cho người dùng chọn
                 else:
                     print(f"Choose {step_id}:")
 
@@ -165,11 +192,11 @@ class ImageGenChain:
                     print(f"Image key: {step_image_keys}")
 
                     image_id = input(
-                        f"Choose image of step {step_id}"
+                        f"Choose image of step {step_id}: "
                     )
 
                     print(
-                        f"Choosen {step_id}.{image_id}"
+                        f"Chosen {step_id}.{image_id}"
                     )
 
             ref_images.append(
@@ -177,6 +204,34 @@ class ImageGenChain:
             )
 
         return ref_images or None
+
+    # =========================
+    # GENERATE KWARGS
+    # =========================
+
+    def _get_generate_kwargs(
+        self,
+        step: dict
+    ) -> dict:
+
+        # step_id và ref_images do ImageGenChain xử lý riêng.
+        # Tất cả key còn lại được truyền vào generate().
+        kwargs = {
+            key: value
+            for key, value in step.items()
+            if key not in ("step_id", "ref_images")
+        }
+
+        # Resolve reference images từ self.images
+        ref_images = self._get_ref_images(
+            step.get("ref_images")
+        )
+
+        # Chỉ thêm kwargs ảnh nếu step có ref_images
+        if ref_images is not None:
+            kwargs[self.gen_ref_image_kwarg] = ref_images
+
+        return kwargs
 
     # =========================
     # SAVE IMAGES
@@ -211,6 +266,7 @@ class ImageGenChain:
 
         for step in self.steps:
 
+            # Update Mermaid trước khi chạy step
             self.display.update(
                 HTML(self._get_mermaid_html())
             )
@@ -221,34 +277,39 @@ class ImageGenChain:
 
             step_id = step["step_id"]
 
+            # Resolve reference images
             ref_images = self._get_ref_images(
-                step["ref_images"]
+                step.get("ref_images")
             )
 
-            print("Ref images:")
+            # Preview reference images nếu có
+            if ref_images:
 
-            display(
-                self.image_grid(
-                    ref_images,
-                    1,
-                    len(ref_images),
-                    preview_width=self.preview_width
+                print("Ref images:")
+
+                display(
+                    self.image_grid(
+                        ref_images,
+                        1,
+                        len(ref_images),
+                        preview_width=self.preview_width
+                    )
                 )
-            )
 
-            kwargs = step["configs"]
+            # Lấy toàn bộ kwargs truyền vào generate()
+            kwargs = self._get_generate_kwargs(step)
 
-            kwargs["prompt"] = step["prompt"]
-            kwargs["images"] = ref_images
-
+            # Generate images
             imgs = self.generate(**kwargs)
 
+            # Lưu ảnh theo step_id
             self.images[step_id] = {}
 
             for idx, img in enumerate(imgs):
 
-                self.images[step_id][f"{idx+1}"] = img
+                self.images[step_id][f"{idx + 1}"] = img
 
+            # Preview kết quả
             print("Result images:")
 
             display(
@@ -262,6 +323,7 @@ class ImageGenChain:
 
             self.running_idx += 1
 
+        # Update Mermaid lần cuối khi pipeline hoàn tất
         self.display.update(
             HTML(self._get_mermaid_html())
         )
